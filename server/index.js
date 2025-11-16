@@ -14,54 +14,38 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ======= CORS FIX (LOCAL + VERCEL + RENDER) =======
+// ======= CORS CONFIG =======
+// Allowed origins (local + Vercel)
 const allowedOrigins = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
   "http://localhost:3000",
   "http://127.0.0.1:3000",
-  process.env.FRONTEND_URL, // from Render / Vercel environment variables
-].filter(Boolean); // remove undefined entries
+  process.env.FRONTEND_URL, // your Vercel URL from Render env
+].filter(Boolean);
 
-const corsOptionsDelegate = (reqOrigin, callback) => {
-  // Note: `reqOrigin` can be undefined for non-browser clients (curl, mobile apps)
-  if (!reqOrigin) return callback(null, true);
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true); // mobile/curl/postman
 
-  if (allowedOrigins.includes(reqOrigin)) {
-    return callback(null, true);
-  }
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
 
-  console.warn("❌ CORS BLOCKED:", reqOrigin);
-  return callback(new Error("Not allowed by CORS"), false);
+    console.log("❌ CORS BLOCKED:", origin);
+    return callback(new Error("Not allowed by CORS"), false);
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "Accept"],
 };
 
-app.use(
-  cors({
-    origin: (origin, cb) => corsOptionsDelegate(origin, cb),
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "Accept"],
-  })
-);
+app.use(cors(corsOptions));
 
-// Explicitly respond to preflight requests
-app.options("*", (req, res) => {
-  // mirror the allowed origin for the preflight reply (safe because we validated origin above)
-  const origin = req.header("Origin");
-  if (!origin || allowedOrigins.includes(origin)) {
-    res.setHeader("Access-Control-Allow-Credentials", "true");
-    res.setHeader(
-      "Access-Control-Allow-Methods",
-      "GET,POST,PUT,PATCH,DELETE,OPTIONS"
-    );
-    res.setHeader(
-      "Access-Control-Allow-Headers",
-      "Content-Type,Authorization,Accept"
-    );
-    return res.sendStatus(204);
-  }
-
-  return res.sendStatus(403);
+// ======= FIXED PREFLIGHT HANDLER =======
+// Must start with "/" to avoid path-to-regexp crash
+app.options("/*", cors(corsOptions), (req, res) => {
+  res.sendStatus(204);
 });
 
 // ======= ROUTES =======
@@ -89,14 +73,13 @@ mongoose
   });
 
 // ======= ERROR HANDLER =======
-// Handle CORS-specific errors more explicitly to avoid confusing 500s
 app.use((err, req, res, next) => {
   if (err && err.message && err.message.includes("CORS")) {
     console.warn("CORS error:", err.message);
-    return res.status(403).json({ error: "CORS error: request blocked" });
+    return res.status(403).json({ error: "CORS error: Request blocked" });
   }
 
-  console.error("Server error middleware:", err.message || err);
+  console.error("Server error:", err.message || err);
   res.status(500).json({ error: "Server internal error" });
 });
 
@@ -106,8 +89,6 @@ app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log("DEBUG ENV:", {
     MONGO: !!process.env.MONGO_URI,
-    JWT: !!process.env.JWT_SECRET,
-    GEMINI: !!process.env.GEMINI_ENDPOINT,
     FRONTEND: process.env.FRONTEND_URL,
   });
 });
